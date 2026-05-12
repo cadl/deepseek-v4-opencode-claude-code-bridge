@@ -975,6 +975,28 @@ function normalizeUpstreamError(error, upstreamContext) {
   return error;
 }
 
+function payloadDebugSummary(payload) {
+  const messages = Array.isArray(payload && payload.messages) ? payload.messages : [];
+  return {
+    model: payload && payload.model,
+    stream: Boolean(payload && payload.stream),
+    message_count: messages.length,
+    messages: messages.map((message, index) => {
+      const toolCalls = Array.isArray(message && message.tool_calls) ? message.tool_calls : [];
+      const summary = {
+        index,
+        role: message && message.role,
+      };
+      if (message && message.name) summary.name = message.name;
+      if (message && message.tool_call_id) summary.tool_call_id = message.tool_call_id;
+      if (toolCalls.length) {
+        summary.tool_call_ids = toolCalls.map((call) => call && call.id).filter(Boolean);
+      }
+      return summary;
+    }),
+  };
+}
+
 function isLoopbackAddress(address) {
   const normalized = String(address || "").replace(/^::ffff:/, "");
   return normalized === "::1" || normalized === "localhost" || normalized.startsWith("127.");
@@ -1012,6 +1034,7 @@ async function callOpenCode(req, payload, upstreamContext) {
 
   if (!response.ok) {
     const text = await response.text();
+    console.error(`Upstream payload summary: ${JSON.stringify(payloadDebugSummary(payload))}`);
     const error = new Error(`OpenCode Go returned ${response.status}: ${text}`);
     error.status = response.status;
     throw error;
