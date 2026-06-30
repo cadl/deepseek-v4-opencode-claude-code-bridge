@@ -73,12 +73,17 @@ test("anthropicToOpenAi converts messages, tools, and DeepSeek reasoning", () =>
   assert.equal(payload.stream, false);
   assert.equal(payload.messages[0].role, "system");
   assert.match(payload.messages[0].content, /You are concise/);
-  assert.match(payload.messages[0].content, /Call the available tool named "Read"/);
+  // forced tool_choice must NOT mutate the system prompt (keeps prefix cache warm)
+  assert.doesNotMatch(payload.messages[0].content, /Call the available tool named/);
   assert.equal(payload.messages[2].role, "assistant");
   assert.equal(payload.messages[2].reasoning_content, "reasoning for tool call");
   assert.equal(payload.messages[2].tool_calls[0].function.name, "Read");
   assert.equal(payload.messages[3].role, "tool");
   assert.equal(payload.messages[3].tool_call_id, "toolu_1");
+  // the instruction lands on a trailing user message (last turn ended with a tool result)
+  const tail = payload.messages[payload.messages.length - 1];
+  assert.equal(tail.role, "user");
+  assert.match(tail.content, /Call the available tool named "Read"/);
   assert.equal(payload.tools[0].function.name, "Read");
   assert.equal(payload.tool_choice, undefined);
 });
@@ -692,7 +697,7 @@ test("reasoning cache trims oldest entries to fit max serialized size", () => {
   }
 });
 
-test("DeepSeek tool_choice any is softened to a system instruction", () => {
+test("DeepSeek forced tool_choice is appended to the trailing user message, not system", () => {
   const payload = bridge.anthropicToOpenAi(
     {
       model: "deepseek-v4-pro[1m]",
@@ -703,7 +708,77 @@ test("DeepSeek tool_choice any is softened to a system instruction", () => {
   );
 
   assert.equal(payload.tool_choice, undefined);
+  assert.equal(payload.messages.length, 1);
+  assert.equal(payload.messages[0].role, "user");
+  assert.match(payload.messages[0].content, /^Use a tool\./);
   assert.match(payload.messages[0].content, /requires a tool call/);
+});
+
+test("forced tool_choice (nudge) leaves the system prompt prefix byte-stable", () => {
+  const base = {
+    model: "deepseek-v4-pro[1m]",
+    system: "STABLE SYSTEM PROMPT",
+    messages: [{ role: "user", content: "do it" }],
+  };
+  const clean = bridge.anthropicToOpenAi(base, false);
+  const forced = bridge.anthropicToOpenAi({ ...base, tool_choice: { type: "any" } }, false);
+
+  // System block is identical with and without forcing -> upstream prefix cache hits.
+  assert.equal(clean.messages[0].content, "STABLE SYSTEM PROMPT");
+  assert.equal(forced.messages[0].content, "STABLE SYSTEM PROMPT");
+  const tail = forced.messages[forced.messages.length - 1];
+  assert.equal(tail.role, "user");
+  assert.match(tail.content, /requires a tool call/);
+});
+
+test("forceToolChoiceMode=native passes native tool_choice and disables thinking", () => {
+  const previous = bridge.CONFIG.forceToolChoiceMode;
+  bridge.CONFIG.forceToolChoiceMode = "native";
+  try {
+    const anyPayload = bridge.anthropicToOpenAi(
+      {
+        model: "deepseek-v4-pro[1m]",
+        system: "SYS",
+        messages: [{ role: "user", content: "do it" }],
+        thinking: { type: "enabled" },
+        tool_choice: { type: "any" },
+      },
+      false,
+    );
+    assert.equal(anyPayload.tool_choice, "required");
+    assert.deepEqual(anyPayload.thinking, { type: "disabled" });
+    // no text instruction injected anywhere; system + user stay clean
+    assert.equal(anyPayload.messages[0].content, "SYS");
+    assert.equal(anyPayload.messages[1].content, "do it");
+    assert.equal(anyPayload.reasoning_effort, undefined);
+
+    const namedPayload = bridge.anthropicToOpenAi(
+      {
+        model: "deepseek-v4-pro[1m]",
+        messages: [{ role: "user", content: "do it" }],
+        tool_choice: { type: "tool", name: "Read" },
+      },
+      false,
+    );
+    assert.deepEqual(namedPayload.tool_choice, { type: "function", function: { name: "Read" } });
+    assert.deepEqual(namedPayload.thinking, { type: "disabled" });
+    assert.equal(namedPayload.messages[0].content, "do it");
+
+    // auto is unaffected by native mode
+    const autoPayload = bridge.anthropicToOpenAi(
+      {
+        model: "deepseek-v4-pro[1m]",
+        messages: [{ role: "user", content: "hi" }],
+        thinking: { type: "enabled" },
+        tool_choice: { type: "auto" },
+      },
+      false,
+    );
+    assert.equal(autoPayload.tool_choice, "auto");
+    assert.deepEqual(autoPayload.thinking, { type: "enabled" });
+  } finally {
+    bridge.CONFIG.forceToolChoiceMode = previous;
+  }
 });
 
 test("streamOpenAiAsAnthropic marks interrupted streams", async () => {

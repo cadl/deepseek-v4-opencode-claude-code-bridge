@@ -138,7 +138,7 @@ ccNexus、LiteLLM、New API、One API 等通用代理项目更适合做多 provi
 - **🗜️ 承受 Claude Code 对话压缩** —— 当 Claude Code 在压缩后仍保留近期 `tool_use`/`tool_result` 块时，bridge 仍能从本地缓存找回对应 reasoning。
 - **👀 可见 thinking** —— 流式 DeepSeek `reasoning_content` 会被包装成 Anthropic 兼容 `thinking` content block，让 Claude Code 可以显示思考内容。
 - **🧩 DeepSeek-aware 扩展字段** —— `thinking` 和 `reasoning_effort` 只会发给 DeepSeek 模型名，实验性接入其他 chat-completions 模型时不会被 DeepSeek 专用字段污染。
-- **🏷️ 贴合 OpenCode Go 模型 ID** —— 默认配置直接使用 OpenCode Go 的 DeepSeek V4 模型 ID，包括 `deepseek-v4-pro[1m]` 和 `deepseek-v4-flash`。
+- **🏷️ 贴合 OpenCode Go 模型 ID** —— 默认配置直接使用 OpenCode Go 的 DeepSeek V4 模型 ID：`deepseek-v4-pro` 和 `deepseek-v4-flash`（含 1M 上下文的 `deepseek-v4-pro[1m]` 变体，按套餐可用）。
 
 > [!TIP]
 > 如果你的目标是多 provider 聚合、团队管理、key 轮换或可视化后台，**通用网关**更合适。
@@ -188,10 +188,11 @@ ccNexus、LiteLLM、New API、One API 等通用代理项目更适合做多 provi
     "baseUrl": "https://opencode.ai/zen/go/v1"
   },
   "models": [
-    "deepseek-v4-pro[1m]",
+    "deepseek-v4-pro",
     "deepseek-v4-flash"
   ],
   "reasoningContent": "auto",
+  "forceToolChoiceMode": "nudge",
   "reasoningCacheMaxEntries": 0,
   "reasoningCacheMaxAgeMs": 2592000000,
   "reasoningCacheMaxSizeBytes": 209715200,
@@ -212,6 +213,7 @@ ccNexus、LiteLLM、New API、One API 等通用代理项目更适合做多 provi
 | `upstream.baseUrl` | OpenAI 兼容上游 base URL。OpenCode Go 使用 `https://opencode.ai/zen/go/v1`。 |
 | `models` | 本地 `/v1/models` 返回的模型 ID。 |
 | `reasoningContent` | `auto` / `always` / `never`。OpenCode Go 建议保持 `auto`，只对 DeepSeek 模型名回放 reasoning 历史。 |
+| `forceToolChoiceMode` | `nudge`（默认）或 `native`。DeepSeek 思考模式不接受强制 `tool_choice`（`any`/`tool`）。`nudge` 保留思考，把「必须调工具」的要求追加到最后一条 user 消息，不动 system/历史前缀，上游前缀缓存继续命中；`native` 则在该轮关闭思考并下发原生 `tool_choice`——硬保证、零 prompt 污染，代价是该轮没有思考。 |
 | `reasoningCacheMaxEntries` | 每个 reasoning cache bucket 的最大条目数。默认 `0` 表示不按条目数裁剪。 |
 | `reasoningCacheMaxAgeMs` | cache 条目自最近一次使用后的最长保留时间。默认 `30 天`。设为 `0` 关闭按时间裁剪。 |
 | `reasoningCacheMaxSizeBytes` | 序列化后的 cache 文件大小上限。默认 `200 MB`。超出时优先移除最旧条目。 |
@@ -220,7 +222,7 @@ ccNexus、LiteLLM、New API、One API 等通用代理项目更适合做多 provi
 | `upstreamTimeoutMs` | 等待 OpenCode Go 上游请求的最长时间。默认 `10 分钟`。 |
 
 > [!IMPORTANT]
-> 默认模型使用 `deepseek-v4-pro[1m]` 这个 1M 上下文变体。如果你的 OpenCode Go 套餐不包含这个变体，请把 `config.json` 和 Claude Code settings 里的所有 `deepseek-v4-pro[1m]` 改成 `deepseek-v4-pro`。
+> 默认模型是 `deepseek-v4-pro`。OpenCode Go 还提供 1M 上下文变体 `deepseek-v4-pro[1m]`；如果你的套餐包含它，可把 `config.json` 和 Claude Code settings 里的所有 `deepseek-v4-pro` 改成 `deepseek-v4-pro[1m]`。请使用你 key 实际支持的模型 ID——不支持的 ID 会被上游以 `Model ... is not supported` 拒绝。
 
 ---
 
@@ -429,18 +431,18 @@ CONFIG_PATH=/path/to/config.json ./scripts/install-autostart-macos.sh
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
-    "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
+    "ANTHROPIC_MODEL": "deepseek-v4-pro",
     "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-v4-flash",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-pro[1m]",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-pro",
     "CLAUDE_CODE_EFFORT_LEVEL": "max"
   }
 }
 ```
 
-上面的示例沿用 DeepSeek 风格配置，通过 `ANTHROPIC_MODEL` 指定主模型。如果保留 `ANTHROPIC_MODEL`，那么在 Claude Code 里切换模型通常只对当前对话有效；新对话仍会回到 `ANTHROPIC_MODEL` 指定的模型。如果你希望 Claude Code 的模型切换器真正控制默认模型映射，请删除 `ANTHROPIC_MODEL`，然后在 Claude Code 的界面或 `/model` 命令里选择模型。Claude Code 会自己维护 `model` 字段。这样 `sonnet` 和 `opus` 会映射到 `deepseek-v4-pro[1m]`，`haiku` 和 small/fast 调用会映射到 `deepseek-v4-flash`。
+上面的示例沿用 DeepSeek 风格配置，通过 `ANTHROPIC_MODEL` 指定主模型。如果保留 `ANTHROPIC_MODEL`，那么在 Claude Code 里切换模型通常只对当前对话有效；新对话仍会回到 `ANTHROPIC_MODEL` 指定的模型。如果你希望 Claude Code 的模型切换器真正控制默认模型映射，请删除 `ANTHROPIC_MODEL`，然后在 Claude Code 的界面或 `/model` 命令里选择模型。Claude Code 会自己维护 `model` 字段。这样 `sonnet` 和 `opus` 会映射到 `deepseek-v4-pro`，`haiku` 和 small/fast 调用会映射到 `deepseek-v4-flash`。
 
 你可以把这份内容保存成单独的 settings 文件，然后通过 `--settings` 使用；也可以直接用同样内容覆盖 Claude Code 默认的 `~/.claude/settings.json`。直接覆盖默认 settings 通常更简单，因为它可以避免和旧的 `ANTHROPIC_AUTH_TOKEN` 或直连 provider 配置发生合并冲突。
 
@@ -503,7 +505,7 @@ claude -p "Reply OK only" --max-turns 1 --settings ~/.claude/settings.opencode-p
 }
 ```
 
-使用 Go API 原始模型 ID（例如 `deepseek-v4-pro[1m]` 或 `kimi-k2.6`），**不要**使用 OpenCode 应用里的 `opencode-go/<model-id>` 前缀。非 DeepSeek 模型在工具调用行为验证前都应视为 best-effort。
+使用 Go API 原始模型 ID（例如 `deepseek-v4-pro` 或 `kimi-k2.6`），**不要**使用 OpenCode 应用里的 `opencode-go/<model-id>` 前缀。非 DeepSeek 模型在工具调用行为验证前都应视为 best-effort。
 
 ---
 
@@ -663,7 +665,7 @@ OpenCode Go 通过 `/v1/chat/completions` 暴露许多模型，包括 GLM、Kimi
 
 | 系列 | 模型 |
 | --- | --- |
-| 🧠 DeepSeek | `deepseek-v4-pro[1m]`、`deepseek-v4-flash` |
+| 🧠 DeepSeek | `deepseek-v4-pro`、`deepseek-v4-pro[1m]`（1M 上下文，按套餐可用）、`deepseek-v4-flash` |
 | 🌌 GLM | `glm-5.1`、`glm-5` |
 | 🌙 Kimi | `kimi-k2.6`、`kimi-k2.5` |
 | 🎭 MiMo | `mimo-v2-pro`、`mimo-v2-omni`、`mimo-v2.5-pro`、`mimo-v2.5` |
@@ -677,7 +679,7 @@ OpenCode Go 通过 `/v1/chat/completions` 暴露许多模型，包括 GLM、Kimi
 ```json
 {
   "models": [
-    "deepseek-v4-pro[1m]",
+    "deepseek-v4-pro",
     "deepseek-v4-flash",
     "kimi-k2.6"
   ],

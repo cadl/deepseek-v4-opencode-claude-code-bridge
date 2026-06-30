@@ -5,7 +5,7 @@ const os = require("os");
 const path = require("path");
 
 const DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1";
-const DEFAULT_MODELS = ["deepseek-v4-pro[1m]", "deepseek-v4-flash"];
+const DEFAULT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"];
 const DEFAULT_REASONING_CACHE_PATH = path.join(
   os.homedir(),
   ".claude",
@@ -17,6 +17,8 @@ const DEFAULT_REASONING_CACHE_MAX_AGE_MS = 30 * DAY_MS;
 const DEFAULT_REASONING_CACHE_MAX_SIZE_BYTES = 200 * 1024 * 1024;
 const DEFAULT_REQUEST_BODY_LIMIT_BYTES = 100 * 1024 * 1024;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_FORCE_TOOL_CHOICE_MODE = "nudge";
+const FORCE_TOOL_CHOICE_MODES = new Set(["nudge", "native"]);
 const CHAT_COMPLETIONS_RESPONSE_HEADERS = ["content-type", "cache-control"];
 const warnedFinishReasons = new Set();
 
@@ -83,6 +85,16 @@ function envValue(name, fallback) {
   return Object.prototype.hasOwnProperty.call(process.env, name) ? process.env[name] : fallback;
 }
 
+function normalizeForceToolChoiceMode(value) {
+  const mode = String(value === undefined || value === null ? DEFAULT_FORCE_TOOL_CHOICE_MODE : value)
+    .trim()
+    .toLowerCase();
+  if (!FORCE_TOOL_CHOICE_MODES.has(mode)) {
+    throw new Error(`Invalid forceToolChoiceMode: ${JSON.stringify(value)} (expected "nudge" or "native")`);
+  }
+  return mode;
+}
+
 function loadConfig() {
   const defaultPath = path.join(__dirname, "config.json");
   const configPath = process.env.CLAUDE_OPENCODE_PROXY_CONFIG || argValue("--config") || defaultPath;
@@ -142,6 +154,12 @@ function loadConfig() {
     ),
     reasoningContentMode:
       envValue("CLAUDE_OPENCODE_REASONING_CONTENT", configValue(fileConfig, ["reasoningContent"], "auto")),
+    forceToolChoiceMode: normalizeForceToolChoiceMode(
+      envValue(
+        "CLAUDE_OPENCODE_FORCE_TOOL_CHOICE_MODE",
+        configValue(fileConfig, ["forceToolChoiceMode"], DEFAULT_FORCE_TOOL_CHOICE_MODE),
+      ),
+    ),
     requestBodyLimitBytes: numberConfig(
       "requestBodyLimitBytes",
       envValue(
@@ -804,8 +822,9 @@ function anthropicToolChoiceToOpenAi(choice, model) {
   if (choice.type === "auto") return "auto";
   if (choice.type === "none") return "none";
   if (isDeepSeekModel(model)) {
-    // DeepSeek reasoner rejects forced function tool_choice, so any/tool are
-    // converted to system instructions instead.
+    // DeepSeek thinking mode rejects forced function tool_choice. In the default
+    // "nudge" mode, any/tool is conveyed as a tail instruction instead (see
+    // appendToolChoiceInstruction); "native" mode bypasses this helper.
     return undefined;
   }
   if (choice.type === "any") return "required";
@@ -825,6 +844,35 @@ function toolChoiceInstruction(choice, model) {
     return `The caller requires a tool call for this turn. Call the available tool named ${JSON.stringify(choice.name)} instead of answering directly.`;
   }
   return null;
+}
+
+function isForcedToolChoice(choice) {
+  if (!choice || typeof choice !== "object") return false;
+  return choice.type === "any" || (choice.type === "tool" && Boolean(choice.name));
+}
+
+function nativeForcedToolChoice(choice) {
+  if (!choice || typeof choice !== "object") return undefined;
+  if (choice.type === "any") return "required";
+  if (choice.type === "tool" && choice.name) {
+    return { type: "function", function: { name: choice.name } };
+  }
+  return undefined;
+}
+
+function appendToolChoiceInstruction(messages, choice, model) {
+  const instruction = toolChoiceInstruction(choice, model);
+  if (!instruction) return;
+  // Keep the turn-specific instruction at the very tail. The upstream prefix
+  // cache invalidates from the first changed message onward, so mutating the
+  // system block (index 0) would void the whole conversation's cache; appending
+  // to the trailing user message (or adding one) leaves system + history stable.
+  const last = messages[messages.length - 1];
+  if (last && last.role === "user" && typeof last.content === "string") {
+    last.content = last.content ? `${last.content}\n\n${instruction}` : instruction;
+    return;
+  }
+  messages.push({ role: "user", content: instruction });
 }
 
 function thinkingToOpenAi(thinking) {
@@ -848,12 +896,24 @@ function reasoningEffortToOpenAi(outputConfig) {
 }
 
 function anthropicToOpenAi(body, stream) {
-  const messages = [];
   const sendDeepSeekExtensions = isDeepSeekModel(body.model);
-  const extraSystem = toolChoiceInstruction(body.tool_choice, body.model);
-  const system = [systemToOpenAi(body.system), extraSystem].filter(Boolean).join("\n\n");
+  // DeepSeek thinking mode rejects native forced tool_choice. Default "nudge"
+  // mode keeps thinking and conveys any/tool as a cache-friendly tail
+  // instruction; "native" mode disables thinking for that turn and passes the
+  // real tool_choice, trading reasoning for a hard guarantee with no prompt
+  // mutation.
+  const useNativeForce =
+    sendDeepSeekExtensions &&
+    CONFIG.forceToolChoiceMode === "native" &&
+    isForcedToolChoice(body.tool_choice);
+
+  const messages = [];
+  const system = systemToOpenAi(body.system);
   if (system) messages.push({ role: "system", content: system });
   messages.push(...anthropicMessagesToOpenAi(body.messages, shouldSendReasoningContent(body.model)));
+  if (sendDeepSeekExtensions && !useNativeForce) {
+    appendToolChoiceInstruction(messages, body.tool_choice, body.model);
+  }
 
   const payload = {
     model: body.model,
@@ -864,9 +924,14 @@ function anthropicToOpenAi(body, stream) {
     top_p: body.top_p,
     stop: body.stop_sequences,
     tools: anthropicToolsToOpenAi(body.tools),
-    tool_choice: anthropicToolChoiceToOpenAi(body.tool_choice, body.model),
-    thinking: sendDeepSeekExtensions ? thinkingToOpenAi(body.thinking) : undefined,
-    reasoning_effort: sendDeepSeekExtensions ? reasoningEffortToOpenAi(body.output_config) : undefined,
+    tool_choice: useNativeForce
+      ? nativeForcedToolChoice(body.tool_choice)
+      : anthropicToolChoiceToOpenAi(body.tool_choice, body.model),
+    thinking: sendDeepSeekExtensions
+      ? (useNativeForce ? { type: "disabled" } : thinkingToOpenAi(body.thinking))
+      : undefined,
+    reasoning_effort:
+      sendDeepSeekExtensions && !useNativeForce ? reasoningEffortToOpenAi(body.output_config) : undefined,
     stream_options: stream ? { include_usage: true } : undefined,
   };
 
@@ -1542,6 +1607,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  CONFIG,
   anthropicMessagesToOpenAi,
   anthropicToolsToOpenAi,
   anthropicToOpenAi,

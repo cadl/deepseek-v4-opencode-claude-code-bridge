@@ -7,10 +7,11 @@
     "baseUrl": "https://opencode.ai/zen/go/v1"
   },
   "models": [
-    "deepseek-v4-pro[1m]",
+    "deepseek-v4-pro",
     "deepseek-v4-flash"
   ],
   "reasoningContent": "auto",
+  "forceToolChoiceMode": "nudge",
   "reasoningCacheMaxEntries": 0,
   "reasoningCacheMaxAgeMs": 2592000000,
   "reasoningCacheMaxSizeBytes": 209715200,
