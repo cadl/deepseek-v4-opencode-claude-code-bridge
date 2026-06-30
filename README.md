@@ -35,6 +35,7 @@ Claude Code speaks Anthropic `/v1/messages`. OpenCode Go exposes DeepSeek V4 thr
 - [📋 Requirements](#-requirements)
 - [⚙️ Configuration](#%EF%B8%8F-configuration)
 - [🚀 Start](#-start)
+- [🐳 Docker / Dokploy](#-docker--dokploy)
 - [🔧 Autostart](#-autostart)
 - [🛠️ Claude Code Settings](#%EF%B8%8F-claude-code-settings)
 - [🩺 Health Check](#-health-check)
@@ -262,6 +263,59 @@ You can also pass a config path explicitly:
 node server.js --config ./config.json
 # or
 CLAUDE_OPENCODE_PROXY_CONFIG=./config.json node server.js
+```
+
+---
+
+## 🐳 Docker / Dokploy
+
+The bridge is pure Node.js with **zero third-party dependencies**, so the image is tiny and needs no build step. It is **stateless** — the OpenCode Go key still arrives per-request from Claude Code, so **no secrets live in the container**.
+
+> [!IMPORTANT]
+> Inside a container you must bind to `0.0.0.0` instead of the default `127.0.0.1`. The image already sets `CLAUDE_OPENCODE_PROXY_HOST=0.0.0.0` for you.
+
+### Run the prebuilt image (GHCR)
+
+```bash
+docker run -d --name deepseek-bridge -p 8787:8787 \
+  ghcr.io/cadl/deepseek-v4-opencode-claude-code-bridge:latest
+```
+
+Then point Claude Code at `http://<host>:8787` (see [Claude Code Settings](#%EF%B8%8F-claude-code-settings)).
+
+### docker compose
+
+A ready-to-use [`docker-compose.yml`](./docker-compose.yml) is included (named volume for the reasoning cache, healthcheck baked into the image):
+
+```bash
+docker compose up -d
+```
+
+### Deploy on Dokploy
+
+1. Create a new **Compose** application and point it at this repository (or paste the contents of `docker-compose.yml`).
+2. Deploy. Dokploy pulls `ghcr.io/cadl/...:latest` and starts the `bridge` service.
+3. Attach a **Domain** to the `bridge` service on port **8787** — Dokploy's built-in Traefik proxy terminates TLS and routes traffic, so no host port mapping is needed.
+4. (Alternative) Use an **Application** with build type *Dockerfile* to build directly from the repo instead of pulling the GHCR image.
+
+> [!NOTE]
+> The `/shutdown` endpoint is restricted to loopback clients, so it is not reachable through the proxy — safe to expose `/health`, `/v1/models`, `/v1/messages`, and `/v1/chat/completions`.
+
+### Publishing the image to GHCR
+
+The repo ships a GitHub Actions workflow at [`.github/workflows/docker-publish.yml`](./.github/workflows/docker-publish.yml) that builds a **multi-arch (amd64 + arm64)** image and pushes it to GHCR. It runs automatically on:
+
+- pushes to `main` → tag `latest`
+- version tags `v*` → semver tags (e.g. `v0.2.1` → `0.2.1`, `0.2`)
+- manual **Run workflow** (`workflow_dispatch`)
+
+It authenticates with the built-in `GITHUB_TOKEN` (no extra secrets). After the **first** successful run, open **Packages** on your GitHub profile and, if you want it pullable without auth, set the package visibility to **Public** and link it to this repo.
+
+```bash
+# Trigger the first publish
+git push origin main
+# …or cut a release
+git tag v0.2.1 && git push origin v0.2.1
 ```
 
 ---
