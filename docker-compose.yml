@@ -1,0 +1,29 @@
+# Compose file for deploying the bridge from the prebuilt GHCR image.
+# Works with `docker compose up -d` locally and as a Dokploy "Compose" service.
+#
+# In Dokploy: create a Compose application, point it at this repo (or paste this
+# file), then attach a domain to the `bridge` service on port 8787. Dokploy's
+# Traefik proxy handles TLS and routing, so no host port mapping is required.
+services:
+  bridge:
+    image: ghcr.io/cadl/deepseek-v4-opencode-claude-code-bridge:latest
+    # To build locally instead of pulling, comment out `image:` above and use:
+    # build: .
+    restart: unless-stopped
+    environment:
+      CLAUDE_OPENCODE_PROXY_HOST: "0.0.0.0"
+      CLAUDE_OPENCODE_PROXY_PORT: "8787"
+      CLAUDE_OPENCODE_REASONING_CACHE: "/app/data/reasoning-cache.json"
+      # Optional overrides:
+      # CLAUDE_OPENCODE_PROXY_UPSTREAM_BASE_URL: "https://opencode.ai/zen/go/v1"
+      # CLAUDE_OPENCODE_LOG_USAGE: "1"
+    expose:
+      - "8787"
+    # For a plain (non-Dokploy) host, publish the port instead:
+    # ports:
+    #   - "8787:8787"
+    volumes:
+      - reasoning-cache:/app/data
+
+volumes:
+  reasoning-cache:
