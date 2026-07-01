@@ -138,7 +138,7 @@ The practical advantage is not that this bridge is more universal — it's that 
 - **🗜️ Claude Code compaction survival** — when Claude Code keeps recent tool-call blocks across compaction, the bridge can still recover matching DeepSeek reasoning from the local cache.
 - **👀 Visible thinking** — streaming DeepSeek `reasoning_content` is exposed to Claude Code as `thinking` content blocks so the UI can show it.
 - **🧩 DeepSeek-aware extensions** — `thinking` and `reasoning_effort` are only sent to DeepSeek model names, so experimental non-DeepSeek chat-completions models are not polluted with DeepSeek-specific fields.
-- **🏷️ OpenCode Go model IDs** — the default config follows OpenCode Go's DeepSeek V4 model IDs, including `deepseek-v4-pro[1m]` and `deepseek-v4-flash`.
+- **🏷️ OpenCode Go model IDs** — the default config follows OpenCode Go's DeepSeek V4 model IDs, `deepseek-v4-pro` and `deepseek-v4-flash` (a 1M-context `deepseek-v4-pro[1m]` variant is available on plans that include it).
 
 > [!TIP]
 > Use a **general gateway** if you mainly need provider aggregation, team management, key rotation, or a dashboard.
@@ -188,10 +188,11 @@ The repository includes a ready-to-use `config.json`. It does **not** contain an
     "baseUrl": "https://opencode.ai/zen/go/v1"
   },
   "models": [
-    "deepseek-v4-pro[1m]",
+    "deepseek-v4-pro",
     "deepseek-v4-flash"
   ],
   "reasoningContent": "auto",
+  "forceToolChoiceMode": "nudge",
   "reasoningCacheMaxEntries": 0,
   "reasoningCacheMaxAgeMs": 2592000000,
   "reasoningCacheMaxSizeBytes": 209715200,
@@ -212,6 +213,7 @@ The repository includes a ready-to-use `config.json`. It does **not** contain an
 | `upstream.baseUrl` | OpenAI-compatible upstream base URL. For OpenCode Go: `https://opencode.ai/zen/go/v1`. |
 | `models` | Model IDs returned by the local `/v1/models` endpoint. |
 | `reasoningContent` | `auto`, `always`, or `never`. Keep `auto` for OpenCode Go — replays DeepSeek reasoning only for DeepSeek model names. |
+| `forceToolChoiceMode` | `nudge` (default) or `native`. DeepSeek thinking mode rejects a forced `tool_choice` (`any`/`tool`). `nudge` keeps thinking and appends the requirement to the last user message, leaving the system/history prefix untouched so the upstream cache stays warm. `native` instead disables thinking for that one turn and sends the real `tool_choice` — a hard guarantee with no prompt mutation, at the cost of that turn's reasoning. |
 | `reasoningCacheMaxEntries` | Max entries per reasoning cache bucket. `0` disables count-based trimming. |
 | `reasoningCacheMaxAgeMs` | Max age since last use. Default `30 days`. `0` disables age-based trimming. |
 | `reasoningCacheMaxSizeBytes` | Max serialized cache file size. Default `200 MB`. Oldest entries are removed first. |
@@ -220,7 +222,7 @@ The repository includes a ready-to-use `config.json`. It does **not** contain an
 | `upstreamTimeoutMs` | Max wait for an upstream OpenCode Go request. Default `10 minutes`. |
 
 > [!IMPORTANT]
-> The default model uses the `deepseek-v4-pro[1m]` 1M-context variant. If your OpenCode Go plan does not include it, replace every `deepseek-v4-pro[1m]` value in `config.json` and Claude Code settings with `deepseek-v4-pro`.
+> The default model is `deepseek-v4-pro`. OpenCode Go also exposes a 1M-context variant, `deepseek-v4-pro[1m]`; if your plan includes it, replace every `deepseek-v4-pro` value in `config.json` and Claude Code settings with `deepseek-v4-pro[1m]`. Use the exact model ID your key supports — an unsupported ID is rejected upstream with `Model ... is not supported`.
 
 ---
 
@@ -429,18 +431,18 @@ Create a Claude Code settings file, for example `~/.claude/settings.opencode-pro
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
-    "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
+    "ANTHROPIC_MODEL": "deepseek-v4-pro",
     "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-v4-flash",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-pro[1m]",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-pro",
     "CLAUDE_CODE_EFFORT_LEVEL": "max"
   }
 }
 ```
 
-The example above follows the DeepSeek-style setup and sets the main model with `ANTHROPIC_MODEL`. If you keep `ANTHROPIC_MODEL`, switching models in Claude Code is only a per-conversation choice; new conversations still fall back to the model named by `ANTHROPIC_MODEL`. If you want Claude Code's model switcher to control the default model mapping, remove `ANTHROPIC_MODEL` and choose the model from Claude Code's UI or `/model` command. Claude Code maintains its own `model` field. Then `sonnet` and `opus` map to `deepseek-v4-pro[1m]`, while `haiku` and small/fast calls map to `deepseek-v4-flash`.
+The example above follows the DeepSeek-style setup and sets the main model with `ANTHROPIC_MODEL`. If you keep `ANTHROPIC_MODEL`, switching models in Claude Code is only a per-conversation choice; new conversations still fall back to the model named by `ANTHROPIC_MODEL`. If you want Claude Code's model switcher to control the default model mapping, remove `ANTHROPIC_MODEL` and choose the model from Claude Code's UI or `/model` command. Claude Code maintains its own `model` field. Then `sonnet` and `opus` map to `deepseek-v4-pro`, while `haiku` and small/fast calls map to `deepseek-v4-flash`.
 
 You can either keep this as a separate settings file and pass it with `--settings`, or replace Claude Code's default `~/.claude/settings.json` with the same content. Replacing the default settings is often simpler because it avoids merging with older `ANTHROPIC_AUTH_TOKEN` or direct-provider settings.
 
@@ -503,7 +505,7 @@ To try another `/v1/chat/completions` Go model, add its model ID to `config.json
 }
 ```
 
-Use the raw Go API model IDs, such as `deepseek-v4-pro[1m]` or `kimi-k2.6`, **not** the OpenCode app prefix `opencode-go/<model-id>`. Non-DeepSeek models should be considered best-effort until their function-calling behavior has been tested.
+Use the raw Go API model IDs, such as `deepseek-v4-pro` or `kimi-k2.6`, **not** the OpenCode app prefix `opencode-go/<model-id>`. Non-DeepSeek models should be considered best-effort until their function-calling behavior has been tested.
 
 ---
 
@@ -663,7 +665,7 @@ As of the OpenCode Go documentation, these Go models use `/v1/chat/completions` 
 
 | Family | Models |
 | --- | --- |
-| 🧠 DeepSeek | `deepseek-v4-pro[1m]`, `deepseek-v4-flash` |
+| 🧠 DeepSeek | `deepseek-v4-pro`, `deepseek-v4-pro[1m]` (1M-context, plan-dependent), `deepseek-v4-flash` |
 | 🌌 GLM | `glm-5.1`, `glm-5` |
 | 🌙 Kimi | `kimi-k2.6`, `kimi-k2.5` |
 | 🎭 MiMo | `mimo-v2-pro`, `mimo-v2-omni`, `mimo-v2.5-pro`, `mimo-v2.5` |
@@ -677,7 +679,7 @@ To try an experimental non-DeepSeek model, add it to `config.json`:
 ```json
 {
   "models": [
-    "deepseek-v4-pro[1m]",
+    "deepseek-v4-pro",
     "deepseek-v4-flash",
     "kimi-k2.6"
   ],
