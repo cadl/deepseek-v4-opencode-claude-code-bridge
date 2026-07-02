@@ -338,7 +338,9 @@ test("openAiToAnthropic converts text and tool calls", () => {
   assert.equal(message.id, "chatcmpl_1");
   assert.equal(message.stop_reason, "tool_use");
   assert.deepEqual(message.usage, {
-    input_tokens: 10,
+    // prompt_tokens (10) already includes the cache hit/miss split (4 + 6),
+    // so the Anthropic-side input_tokens (uncached remainder) is 0.
+    input_tokens: 0,
     output_tokens: 5,
     cache_read_input_tokens: 4,
     cache_creation_input_tokens: 6,
@@ -459,7 +461,10 @@ test("streamOpenAiAsAnthropic emits message_stop and usage", async () => {
   assert.match(output, /event: content_block_delta/);
   assert.match(output, /"text":"OK"/);
   assert.match(output, /event: message_delta/);
-  assert.match(output, /"input_tokens":3/);
+  // prompt_tokens (3) = cache hit (1) + miss (2), so uncached input is 0.
+  // Anchor on the message_delta usage object so the message_start placeholder
+  // (also input_tokens: 0) can't satisfy the assertion.
+  assert.match(output, /"usage":\{"input_tokens":0,"output_tokens":2/);
   assert.match(output, /"output_tokens":2/);
   assert.match(output, /"cache_read_input_tokens":1/);
   assert.match(output, /"cache_creation_input_tokens":2/);
