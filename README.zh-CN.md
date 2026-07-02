@@ -540,7 +540,7 @@ bridge 会把上游 OpenAI 兼容 usage 转成 Claude Code 能理解的 Anthropi
 
 | Anthropic 字段（上报给 Claude Code） | 数据来源（上游 OpenCode Go） |
 | --- | --- |
-| `input_tokens` | `prompt_tokens` 或 `input_tokens` |
+| `input_tokens` | `prompt_tokens` 减去 `prompt_cache_hit_tokens` 与 `prompt_cache_miss_tokens`（即未走缓存的剩余部分；DeepSeek 的 `prompt_tokens` = hit + miss，因此通常为 `0`） |
 | `output_tokens` | `completion_tokens` 或 `output_tokens` |
 | `cache_read_input_tokens` | `prompt_cache_hit_tokens`（如果存在） |
 | `cache_creation_input_tokens` | `prompt_cache_miss_tokens`（如果存在） |

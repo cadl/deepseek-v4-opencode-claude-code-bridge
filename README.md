@@ -540,7 +540,7 @@ The bridge maps upstream OpenAI-compatible usage into Anthropic-style usage for 
 
 | Anthropic field (reported to Claude Code) | Source (upstream OpenCode Go) |
 | --- | --- |
-| `input_tokens` | `prompt_tokens` or `input_tokens` |
+| `input_tokens` | `prompt_tokens` minus `prompt_cache_hit_tokens` and `prompt_cache_miss_tokens` (the uncached remainder; typically `0` for DeepSeek, whose `prompt_tokens` = hit + miss) |
 | `output_tokens` | `completion_tokens` or `output_tokens` |
 | `cache_read_input_tokens` | `prompt_cache_hit_tokens` (when present) |
 | `cache_creation_input_tokens` | `prompt_cache_miss_tokens` (when present) |

@@ -1197,18 +1197,26 @@ function upstreamResponseHeaders(headers) {
 
 function openAiUsageToAnthropic(usage) {
   if (!usage || typeof usage !== "object") return { input_tokens: 0, output_tokens: 0 };
+  const promptTokens = usage.prompt_tokens || usage.input_tokens || 0;
+  const cacheRead = usage.prompt_cache_hit_tokens || 0;
+  const cacheMiss = usage.prompt_cache_miss_tokens || 0;
   const out = {
-    input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
+    // Anthropic input_tokens counts only tokens NOT served from cache. DeepSeek's
+    // prompt_tokens already includes cache-hit tokens, so subtract the cache-read
+    // (and cache-miss, which we surface as cache_creation) portion. Otherwise a
+    // downstream that computes read / (input + read + creation) sees ~read/(2*prompt),
+    // halving a real ~99% hit rate to ~50%.
+    input_tokens: Math.max(promptTokens - cacheRead - cacheMiss, 0),
     output_tokens: usage.completion_tokens || usage.output_tokens || 0,
   };
-  if (usage.prompt_cache_hit_tokens) {
-    out.cache_read_input_tokens = usage.prompt_cache_hit_tokens;
+  if (cacheRead) {
+    out.cache_read_input_tokens = cacheRead;
   }
-  if (usage.prompt_cache_miss_tokens) {
+  if (cacheMiss) {
     // Compatibility estimate: DeepSeek/OpenCode Go reports cache-miss input,
     // not Anthropic-style cache creation. Mapping it here makes Claude Code
     // /usage show the uncached side of DeepSeek billing as "cache write".
-    out.cache_creation_input_tokens = usage.prompt_cache_miss_tokens;
+    out.cache_creation_input_tokens = cacheMiss;
   }
   return out;
 }
